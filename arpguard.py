@@ -1,62 +1,65 @@
 #!/usr/bin/env python3
-import scapy.all as scapy
+from scapy.all import *
+import logging
 import sys
 
-def get_mac(ip):
-    # 1. Create an ARP Request ("Who has this IP?")
-    arp_request = scapy.ARP(pdst=ip)
-    # 2. Create an Ethernet Frame (Broadcast to everyone: ff:ff:ff:ff:ff:ff)
-    broadcast = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
-    # 3. Combine them
-    arp_request_broadcast = broadcast/arp_request
-    # 4. Send and wait for answer (timeout=1s so it doesn't hang)
-    answered_list = scapy.srp(arp_request_broadcast, timeout=1, verbose=False)[0]
+# 1. Initialize the Black Box Logger
+logging.basicConfig(
+    filename='arpguard.log',
+    level=logging.WARNING,
+    format='%(asctime)s - [ALERT] - %(message)s'
+)
 
-    # Return the MAC address from the first answer
-    if answered_list:
-        return answered_list[0][1].hwsrc
-    else:
-        return None
+def get_gateway_ip():
+    """Automatically find the default gateway IP."""
+    return conf.route.route("0.0.0.0")[2]
 
-def sniff(interface):
-    # Filter for ARP packets only
-    scapy.sniff(iface=interface, store=False, prn=process_packet)
+def get_real_mac(ip):
+    """Send a legitimate ARP request to get the true MAC address."""
+    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip), timeout=2, verbose=0)
+    for snd, rcv in ans:
+        return rcv.sprintf(r"%Ether.src%")
+    return None
 
+# 2. Baseline Configuration
+print("========================================")
+print("      🛡️ ArpGuard IDS Active 🛡️      ")
+print("========================================")
+
+gateway_ip = get_gateway_ip()
+print(f"[*] Discovering Gateway IP: {gateway_ip}")
+
+gateway_mac = get_real_mac(gateway_ip)
+if not gateway_mac:
+    print("[!] Error: Could not resolve Gateway MAC. Check your network connection.")
+    sys.exit(1)
+
+print(f"[*] True Gateway MAC locked as: {gateway_mac}")
+print("[*] Monitoring local traffic... (Press Ctrl+C to stop)\n")
+
+# 3. Core Detection Engine
 def process_packet(packet):
-    # Check if the packet is an ARP Response (op=2)
-    if packet.haslayer(scapy.ARP) and packet[scapy.ARP].op == 2:
-        try:
-            # Get the IP and MAC from the packet
-            real_mac = get_mac(packet[scapy.ARP].psrc)
-            response_mac = packet[scapy.ARP].hwsrc
+    # We only care about ARP responses (op=2) claiming to be the Gateway
+    if packet.haslayer(ARP) and packet[ARP].op == 2:
+        if packet[ARP].psrc == gateway_ip:
+            real_mac = gateway_mac
+            fake_mac = packet[ARP].hwsrc
 
-            # THE LIE DETECTOR
-            # If the MAC we just saw (response_mac) does NOT match the real one...
-            if real_mac != response_mac:
-                print(f"\n[!!!] YOU ARE UNDER ATTACK!")
-                print(f"[!!!] Real MAC: {real_mac}, Fake MAC: {response_mac}")
-            
-        except IndexError:
-            pass
+            # If the MAC in the packet doesn't match the locked MAC -> Attack!
+            if real_mac != fake_mac:
+                alert_msg = f"Gateway Spoofing Detected! Real: {real_mac} | Attacker: {fake_mac}"
+                
+                # Print to terminal
+                print(f"[!!!] YOU ARE UNDER ATTACK!")
+                print(f"[!!!] {alert_msg}\n")
+                
+                # Write quietly to the log file
+                logging.warning(alert_msg)
 
-# --- Main Execution ---
-# Replace with your specific Gateway IP
-gateway_ip = "10.97.82.219" 
-
+# 4. Start the Sniffer
 try:
-    print(f"[+] Getting MAC address for Gateway: {gateway_ip}")
-    # Get the Golden Record
-    original_mac = get_mac(gateway_ip)
-    
-    if not original_mac:
-        print("[-] Could not find Gateway MAC. Check IP address.")
-        sys.exit()
-        
-    print(f"[+] Gateway MAC is: {original_mac}")
-    print("[+] ArpGuard is running... (Press Ctrl+C to stop)")
-    
-    # Start the sniffer
-    sniff("wlan0")
-    
+    # store=0 ensures we don't eat up your RAM by keeping packets in memory
+    sniff(filter="arp", prn=process_packet, store=0)
 except KeyboardInterrupt:
-    print("\n[+] Detected CTRL+C ... Quitting.")
+    print("\n[*] Shutting down ArpGuard. Stay safe.")
+    sys.exit(0)
