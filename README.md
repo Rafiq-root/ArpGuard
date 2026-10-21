@@ -50,6 +50,16 @@ Basic Run:
 Bash
 sudo python3 arpguard.py
 
+On startup, ArpGuard discovers the default gateway and asks you to verify its MAC address before trusting it. Check the displayed value against your router's admin page, label, or another trusted source. If you cannot confirm it, answer `n` (or press Enter) and monitoring exits.
+
+For repeat runs, provide a MAC address that you have already verified:
+
+```bash
+sudo python3 arpguard.py --gateway-mac aa:bb:cc:dd:ee:ff
+```
+
+ArpGuard still probes the gateway at startup and exits if the discovered MAC does not match the configured value. This avoids silently trusting an unexpected startup response. Recheck the configured MAC if you replace your router or change network hardware.
+
 What to Expect:
 
 The script will print the Gateway's MAC address.
