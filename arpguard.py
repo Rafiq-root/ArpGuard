@@ -46,6 +46,8 @@ def parse_args():
     )
     parser.add_argument("--pcap", help="Replay an offline PCAP file instead of monitoring a live interface.")
     parser.add_argument("--gateway-ip", help="Gateway IPv4 address to use with --pcap.")
+    parser.add_argument("--ipv6-gateway-ip", help="Trusted IPv6 router address to monitor for Neighbor Discovery spoofing.")
+    parser.add_argument("--ipv6-gateway-mac", help="Trusted MAC address for the IPv6 router; must be verified independently.")
     parser.add_argument("--log-file", default="arpguard.log", help="JSON alert log path (default: arpguard.log).")
     parser.add_argument(
         "--log-size-mb",
@@ -85,6 +87,25 @@ if args.gateway_mac and not configured_gateway_mac:
     print("[!] Error: --gateway-mac must be a MAC address like aa:bb:cc:dd:ee:ff.")
     sys.exit(2)
 
+if bool(args.ipv6_gateway_ip) != bool(args.ipv6_gateway_mac):
+    print("[!] Error: IPv6 monitoring requires both --ipv6-gateway-ip and --ipv6-gateway-mac.")
+    sys.exit(2)
+
+ipv6_gateway_ip = None
+ipv6_gateway_mac = None
+if args.ipv6_gateway_ip:
+    try:
+        if ipaddress.ip_address(args.ipv6_gateway_ip).version != 6:
+            raise ValueError("router address must be IPv6")
+    except ValueError as exc:
+        print(f"[!] Error: Invalid --ipv6-gateway-ip: {exc}")
+        sys.exit(2)
+    ipv6_gateway_mac = normalize_mac(args.ipv6_gateway_mac)
+    if not ipv6_gateway_mac:
+        print("[!] Error: --ipv6-gateway-mac must be a MAC address like aa:bb:cc:dd:ee:ff.")
+        sys.exit(2)
+    ipv6_gateway_ip = args.ipv6_gateway_ip
+
 if args.pcap:
     if args.interface:
         print("[!] Error: --interface cannot be used with --pcap.")
@@ -106,6 +127,8 @@ if args.pcap:
     selected_interface = None
     print(f"[*] Replaying offline capture: {args.pcap}")
     print(f"[*] Using supplied gateway baseline: {gateway_ip} / {gateway_mac}")
+    if ipv6_gateway_ip:
+        print(f"[*] Using supplied IPv6 router baseline: {ipv6_gateway_ip} / {ipv6_gateway_mac}")
 else:
     if args.gateway_ip:
         print("[!] Error: --gateway-ip is only valid with --pcap.")
@@ -155,13 +178,77 @@ else:
             sys.exit(1)
 
     print(f"[*] True Gateway MAC locked as: {gateway_mac}")
+    if ipv6_gateway_ip:
+        print(f"[*] Monitoring IPv6 router: {ipv6_gateway_ip} / {ipv6_gateway_mac}")
     print("[*] Monitoring local traffic... (Press Ctrl+C to stop)\n")
 
 if args.pcap:
     print("[*] Replaying packets...\n")
 
 # 3. Core Detection Engine
+def process_ndp_packet(packet):
+    if not ipv6_gateway_ip or not packet.haslayer(IPv6):
+        return
+
+    ethernet_mac = packet[Ether].src.lower() if packet.haslayer(Ether) else None
+    reasons = []
+    advertised_mac = None
+
+    if packet.haslayer(ICMPv6ND_RA):
+        packet_type = "router_advertisement"
+        router_ip = packet[IPv6].src
+        if router_ip != ipv6_gateway_ip:
+            reasons.append(f"router advertisement from unexpected IPv6 address {router_ip} (expected {ipv6_gateway_ip})")
+        if ethernet_mac and ethernet_mac != ipv6_gateway_mac:
+            reasons.append(f"router advertisement Ethernet source {ethernet_mac} does not match expected MAC {ipv6_gateway_mac}")
+        if packet.haslayer(ICMPv6NDOptSrcLLAddr):
+            advertised_mac = packet[ICMPv6NDOptSrcLLAddr].lladdr
+            if advertised_mac:
+                advertised_mac = advertised_mac.lower()
+                if advertised_mac != ipv6_gateway_mac:
+                    reasons.append(f"router advertisement source MAC option {advertised_mac} does not match expected MAC {ipv6_gateway_mac}")
+        target_ip = router_ip
+    elif packet.haslayer(ICMPv6ND_NA):
+        neighbor = packet[ICMPv6ND_NA]
+        target_ip = neighbor.tgt
+        if target_ip != ipv6_gateway_ip:
+            return
+        packet_type = "neighbor_advertisement"
+        if ethernet_mac and ethernet_mac != ipv6_gateway_mac:
+            reasons.append(f"neighbor advertisement Ethernet source {ethernet_mac} does not match expected MAC {ipv6_gateway_mac}")
+        if packet.haslayer(ICMPv6NDOptDstLLAddr):
+            advertised_mac = packet[ICMPv6NDOptDstLLAddr].lladdr
+            if advertised_mac:
+                advertised_mac = advertised_mac.lower()
+                if advertised_mac != ipv6_gateway_mac:
+                    reasons.append(f"neighbor advertisement target MAC option {advertised_mac} does not match expected MAC {ipv6_gateway_mac}")
+    else:
+        return
+
+    if not reasons:
+        return
+
+    event = {
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "event": "suspicious_ipv6_ndp",
+        "capture_mode": "offline" if args.pcap else "live",
+        "packet_type": packet_type,
+        "interface": None if args.pcap else (getattr(packet, "sniffed_on", None) or selected_interface or "unknown"),
+        "capture_file": os.path.basename(args.pcap) if args.pcap else None,
+        "expected_router_ipv6": ipv6_gateway_ip,
+        "expected_router_mac": ipv6_gateway_mac,
+        "ipv6_source": packet[IPv6].src,
+        "ipv6_target": target_ip,
+        "ethernet_source_mac": ethernet_mac,
+        "advertised_link_layer_mac": advertised_mac,
+        "reasons": reasons,
+    }
+    alert_msg = json.dumps(event, sort_keys=True)
+    print(f"[!!!] Suspicious IPv6 NDP activity detected: {alert_msg}\n")
+    logging.warning(alert_msg)
+
 def process_packet(packet):
+    process_ndp_packet(packet)
     if not packet.haslayer(ARP) or packet[ARP].op not in (1, 2):
         return
 
@@ -206,7 +293,8 @@ try:
         sniff(offline=args.pcap, prn=process_packet, store=0)
         print("[*] Offline replay complete.")
     else:
-        sniff(iface=selected_interface, filter="arp", prn=process_packet, store=0)
+        capture_filter = "arp or icmp6" if ipv6_gateway_ip else "arp"
+        sniff(iface=selected_interface, filter=capture_filter, prn=process_packet, store=0)
 except KeyboardInterrupt:
     print("\n[*] Shutting down ArpGuard. Stay safe.")
     sys.exit(0)

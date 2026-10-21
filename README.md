@@ -24,6 +24,7 @@
 | **Auto-Gateway Detection** | Automatically finds your Router IP and MAC address. |
 | **Stealth Mode** | Uses passive sniffing; does not broadcast packets unless necessary. |
 | **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
+| **IPv6 NDP checks** | Optionally checks IPv6 router advertisements and neighbor advertisements against a separately verified router address and MAC. |
 | **Low Resource Usage** | Optimized with BPF filters to run on low-end hardware (e.g., Raspberry Pi). |
 | **Linux service example** | Includes a systemd unit for unattended monitoring with packet-capture capability instead of running the full service as root. |
 | **Rotating JSON logs** | Keeps alert logs bounded and lets you choose their location. |
@@ -71,15 +72,24 @@ sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff
 
 Without `--interface`, ArpGuard uses the interface selected by the default route. An explicitly selected interface must have a usable default route; ArpGuard exits with an error rather than silently monitoring a different network.
 
+On dual-stack networks, you can also monitor IPv6 Neighbor Discovery by supplying the router's IPv6 address and a MAC you verified independently. Router Advertisements from another IPv6 address or MAC, and Neighbor Advertisements claiming the configured router address from another MAC, are reported:
+
+```bash
+sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff --ipv6-gateway-ip fe80::1 --ipv6-gateway-mac aa:bb:cc:dd:ee:ff
+```
+
+The IPv6 trust values are explicit and are never learned from the monitored packets. If your network has multiple legitimate IPv6 routers, configure and account for them before enabling this check; announcements from other routers are reported as unexpected.
+
 ### Offline PCAP replay
 
-You can analyze a saved capture without root access or sending packets. Supply the gateway IP and a MAC address verified from a trusted source:
+You can analyze a saved capture without root access or sending packets. Supply the gateway IP and a MAC address verified from a trusted source. Add the optional IPv6 router pair to inspect NDP traffic too:
 
 ```bash
 python3 arpguard.py --pcap capture.pcap --gateway-ip 192.168.1.1 --gateway-mac aa:bb:cc:dd:ee:ff
+python3 arpguard.py --pcap capture.pcap --gateway-ip 192.168.1.1 --gateway-mac aa:bb:cc:dd:ee:ff --ipv6-gateway-ip fe80::1 --ipv6-gateway-mac aa:bb:cc:dd:ee:ff
 ```
 
-Offline mode reads packets from the PCAP and reports matching anomalies using the same detector as live monitoring. It does not discover or probe a gateway and does not start a live network capture. Both gateway values are required so the replay does not treat a value learned from the capture itself as trusted.
+Offline mode reads packets from the PCAP and reports matching anomalies using the same detector as live monitoring. It does not discover or probe a gateway and does not start a live network capture. The IPv4 gateway pair is required; the IPv6 pair is optional. Supplied values keep the replay from treating a value learned from the capture itself as trusted.
 
 What to Expect:
 
