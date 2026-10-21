@@ -6,9 +6,11 @@ import ipaddress
 import json
 import logging
 from logging.handlers import RotatingFileHandler, SysLogHandler
+import math
 import os
 import re
 import sys
+import time
 
 def get_gateway_route(interface=None):
     """Return the default-route interface and gateway, optionally scoped to an interface."""
@@ -73,6 +75,12 @@ def parse_args():
         help="Forward JSON alerts to the local syslog socket at /dev/log.",
     )
     parser.add_argument(
+        "--alert-cooldown",
+        type=float,
+        default=5.0,
+        help="Seconds to coalesce identical alerts (default: 5; set 0 to disable).",
+    )
+    parser.add_argument(
         "--log-size-mb",
         type=int,
         default=5,
@@ -88,6 +96,9 @@ print("========================================")
 args = parse_args()
 if args.log_size_mb < 1:
     print("[!] Error: --log-size-mb must be at least 1.")
+    sys.exit(2)
+if not math.isfinite(args.alert_cooldown) or args.alert_cooldown < 0:
+    print("[!] Error: --alert-cooldown must be a finite number greater than or equal to 0.")
     sys.exit(2)
 
 try:
@@ -257,6 +268,39 @@ if args.pcap:
     print("[*] Replaying packets...\n")
 
 # 3. Core Detection Engine
+recent_alerts = {}
+alert_count = 0
+
+def emit_alert(event, marker):
+    """Print and log an alert, coalescing exact repeats during the cooldown."""
+    global alert_count
+    fingerprint = (
+        event["event"],
+        event["packet_type"],
+        event.get("arp_sender_ip", event.get("ipv6_source")),
+        event.get("arp_sender_mac", event.get("ethernet_source_mac")),
+        tuple(event["reasons"]),
+    )
+    now = time.monotonic()
+    previous = recent_alerts.get(fingerprint)
+    if args.alert_cooldown and previous and now - previous["last"] < args.alert_cooldown:
+        previous["suppressed"] += 1
+        return
+
+    if previous and previous["suppressed"]:
+        event["suppressed_count"] = previous["suppressed"]
+    recent_alerts[fingerprint] = {"last": now, "suppressed": 0}
+    alert_count += 1
+    if alert_count % 256 == 0:
+        stale_before = now - args.alert_cooldown
+        for old_fingerprint, record in list(recent_alerts.items()):
+            if record["last"] < stale_before:
+                del recent_alerts[old_fingerprint]
+
+    alert_msg = json.dumps(event, sort_keys=True)
+    print(f"{marker} {alert_msg}\n")
+    logging.warning(alert_msg)
+
 def process_ndp_packet(packet):
     if not trusted_ipv6_routers or not packet.haslayer(IPv6):
         return
@@ -327,9 +371,7 @@ def process_ndp_packet(packet):
         "advertised_link_layer_mac": advertised_mac,
         "reasons": reasons,
     }
-    alert_msg = json.dumps(event, sort_keys=True)
-    print(f"[!!!] Suspicious IPv6 NDP activity detected: {alert_msg}\n")
-    logging.warning(alert_msg)
+    emit_alert(event, "[!!!] Suspicious IPv6 NDP activity detected:")
 
 def process_packet(packet):
     process_ndp_packet(packet)
@@ -366,10 +408,7 @@ def process_packet(packet):
             "ethernet_source_mac": ethernet_mac,
             "reasons": reasons,
         }
-        alert_msg = json.dumps(event, sort_keys=True)
-
-        print(f"[!!!] Suspicious ARP activity detected: {alert_msg}\n")
-        logging.warning(alert_msg)
+        emit_alert(event, "[!!!] Suspicious ARP activity detected:")
 
 # 4. Start the Sniffer
 try:

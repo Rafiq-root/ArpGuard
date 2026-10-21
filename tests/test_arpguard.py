@@ -312,6 +312,36 @@ class ArpGuardTests(unittest.TestCase):
         self.assertEqual(event["event"], "suspicious_arp")
         self.assertEqual(RecordingSyslogHandler.addresses, ["/dev/log"])
 
+    def test_alert_cooldown_coalesces_identical_alerts_and_reports_suppressed_count(self):
+        packet = FakePacket(
+            arp=FakeARP(op=2, psrc=GATEWAY_IP, hwsrc=OTHER_MAC),
+            ethernet=FakeEther(src=OTHER_MAC),
+        )
+        with patch("time.monotonic", side_effect=[10.0, 11.0, 16.0]):
+            code, output, *_ = self.run_agent(["--alert-cooldown", "5"], [packet, packet, packet])
+        self.assertEqual(code, 0)
+        marker = "Suspicious ARP activity detected:"
+        events = [json.loads(line.split(marker, 1)[1].strip()) for line in output.splitlines() if marker in line]
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[-1]["suppressed_count"], 1)
+
+    def test_zero_alert_cooldown_keeps_every_event(self):
+        packet = FakePacket(
+            arp=FakeARP(op=2, psrc=GATEWAY_IP, hwsrc=OTHER_MAC),
+            ethernet=FakeEther(src=OTHER_MAC),
+        )
+        code, output, *_ = self.run_agent(["--alert-cooldown", "0"], [packet, packet])
+        self.assertEqual(code, 0)
+        self.assertEqual(output.count("Suspicious ARP activity detected:"), 2)
+
+    def test_invalid_alert_cooldown_is_rejected(self):
+        for value in ("-1", "nan"):
+            with self.subTest(value=value):
+                code, output, state, *_ = self.run_agent(["--alert-cooldown", value])
+                self.assertEqual(code, 2)
+                self.assertIn("--alert-cooldown must be a finite number", output)
+                self.assertNotIn("sniff_options", state)
+
     def test_ethernet_arp_mismatch_alerts_but_normal_reply_does_not(self):
         mismatch = FakePacket(
             arp=FakeARP(psrc="192.168.1.20", hwsrc=GATEWAY_MAC),
@@ -445,7 +475,7 @@ class ArpGuardTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 code, _, _, _ = self.run_agent(
                     ["--pcap", __file__, "--gateway-ip", GATEWAY_IP, "--gateway-mac", GATEWAY_MAC,
-                     "--log-size-mb", "1"],
+                     "--log-size-mb", "1", "--alert-cooldown", "0"],
                     packets,
                     offline=True,
                     log_path=log_path,

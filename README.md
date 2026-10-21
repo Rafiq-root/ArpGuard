@@ -26,6 +26,7 @@
 | **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, allows explicitly trusted failover MACs, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
 | **IPv6 NDP checks** | Optionally checks IPv6 router advertisements and neighbor advertisements against separately verified router address and MAC pairs, including multiple routers. |
 | **Alert severity** | Labels gateway/router mapping violations `high` and Ethernet/ARP source mismatches `medium` to support triage. |
+| **Alert cooldown** | Coalesces identical alerts during a configurable interval and reports the suppressed repeat count on the next alert. |
 | **Local syslog forwarding** | Optionally forwards the same JSON alert records to the host syslog socket. |
 | **Low Resource Usage** | Optimized with BPF filters to run on low-end hardware (e.g., Raspberry Pi). |
 | **Linux service example** | Includes a systemd unit for unattended monitoring with packet-capture capability instead of running the full service as root. |
@@ -110,7 +111,7 @@ From the repository root, run the regression suite with Python's standard librar
 python3 -m unittest discover -s tests -v
 ```
 
-The tests simulate Scapy packet input and cover baseline validation, interface selection, capture preflight, ARP/NDP alerts, trusted-router exceptions, alert severity, syslog forwarding, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
+The tests simulate Scapy packet input and cover baseline validation, interface selection, capture preflight, ARP/NDP alerts, trusted-router exceptions, alert severity and cooldown, syslog forwarding, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
 
 ### Offline PCAP replay
 
@@ -185,6 +186,13 @@ sudo python3 arpguard.py --log-file /var/log/arpguard/events.jsonl --log-size-mb
 ```
 
 Each entry includes the timestamp, capture mode, interface for live capture (or `null` for offline replay), PCAP filename when replaying, packet type, gateway IP and expected MAC, observed sender MACs, and the reasons for the alert. The log contents are JSON Lines, with one alert object per line.
+
+By default, identical alerts are coalesced for five seconds to reduce terminal, file, and syslog noise during a burst. The next alert after the interval includes `suppressed_count`. Set a longer interval or disable coalescing with `--alert-cooldown 0`:
+
+```bash
+sudo python3 arpguard.py --gateway-mac aa:bb:cc:dd:ee:ff --alert-cooldown 30
+sudo python3 arpguard.py --gateway-mac aa:bb:cc:dd:ee:ff --alert-cooldown 0
+```
 
 To forward alerts to the local syslog service as well, add `--syslog`. ArpGuard sends the JSON alert message to `/dev/log`; configure the host's syslog daemon to route it onward if needed. Without this option, alerts go only to the terminal and rotating file.
 
