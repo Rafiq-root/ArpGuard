@@ -51,6 +51,11 @@ def parse_args():
         help="Network interface to use (defaults to the interface selected by the default route).",
     )
     parser.add_argument("--pcap", help="Replay an offline PCAP file instead of monitoring a live interface.")
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Validate startup configuration and live capture access, then exit without monitoring or replaying.",
+    )
     parser.add_argument("--gateway-ip", help="Gateway IPv4 address to use with --pcap.")
     parser.add_argument("--ipv6-gateway-ip", help="Trusted IPv6 router address to monitor for Neighbor Discovery spoofing.")
     parser.add_argument("--ipv6-gateway-mac", help="Trusted MAC address for the IPv6 router; must be verified independently.")
@@ -161,7 +166,8 @@ if args.pcap:
     gateway_ip = args.gateway_ip
     gateway_mac = configured_gateway_mac
     selected_interface = None
-    print(f"[*] Replaying offline capture: {args.pcap}")
+    if not args.check_only:
+        print(f"[*] Replaying offline capture: {args.pcap}")
     print(f"[*] Using supplied gateway baseline: {gateway_ip} / {gateway_mac}")
     if ipv6_gateway_ip:
         print(f"[*] Using supplied IPv6 router baseline: {ipv6_gateway_ip} / {ipv6_gateway_mac}")
@@ -217,7 +223,23 @@ else:
     trusted_gateway_macs.add(gateway_mac)
     if ipv6_gateway_ip:
         print(f"[*] Monitoring IPv6 router: {ipv6_gateway_ip} / {ipv6_gateway_mac}")
-    print("[*] Monitoring local traffic... (Press Ctrl+C to stop)\n")
+    if not args.check_only:
+        print("[*] Monitoring local traffic... (Press Ctrl+C to stop)\n")
+
+capture_filter = "arp or icmp6" if trusted_ipv6_routers else "arp"
+
+if args.check_only:
+    if args.pcap:
+        print("[*] Configuration check passed: offline PCAP and trusted baselines are ready.")
+    else:
+        try:
+            capture_socket = conf.L2listen(iface=selected_interface, filter=capture_filter)
+            capture_socket.close()
+        except Exception as exc:
+            print(f"[!] Error: Capture preflight failed on '{selected_interface}': {exc}")
+            sys.exit(1)
+        print(f"[*] Configuration check passed: capture is available on {selected_interface} with filter '{capture_filter}'.")
+    sys.exit(0)
 
 if args.pcap:
     print("[*] Replaying packets...\n")
@@ -344,7 +366,6 @@ try:
         sniff(offline=args.pcap, prn=process_packet, store=0)
         print("[*] Offline replay complete.")
     else:
-        capture_filter = "arp or icmp6" if trusted_ipv6_routers else "arp"
         sniff(iface=selected_interface, filter=capture_filter, prn=process_packet, store=0)
 except KeyboardInterrupt:
     print("\n[*] Shutting down ArpGuard. Stay safe.")

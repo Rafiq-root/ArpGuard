@@ -102,6 +102,14 @@ class FakeRoute:
         return interface, "192.168.1.10", gateway
 
 
+class FakeCaptureSocket:
+    def __init__(self, state):
+        self.state = state
+
+    def close(self):
+        self.state["capture_socket_closed"] = True
+
+
 def make_scapy(state, packets):
     scapy = types.ModuleType("scapy")
     scapy_all = types.ModuleType("scapy.all")
@@ -117,7 +125,13 @@ def make_scapy(state, packets):
     scapy_all.__all__ = list(symbols) + ["conf", "get_if_list", "srp", "sniff"]
     for name, value in symbols.items():
         setattr(scapy_all, name, value)
-    scapy_all.conf = types.SimpleNamespace(route=FakeRoute(state))
+    def l2listen(**kwargs):
+        state["capture_preflight"] = kwargs
+        if state.get("capture_preflight_error"):
+            raise PermissionError("packet capture permission denied")
+        return FakeCaptureSocket(state)
+
+    scapy_all.conf = types.SimpleNamespace(route=FakeRoute(state), L2listen=l2listen)
     scapy_all.get_if_list = lambda: ["eth0", "eth1"]
 
     def srp(query, **kwargs):
@@ -201,6 +215,40 @@ class ArpGuardTests(unittest.TestCase):
         code, output, state, *_ = self.run_agent(["--interface", "eth9"])
         self.assertEqual(code, 2)
         self.assertIn("was not found", output)
+        self.assertNotIn("sniff_options", state)
+
+    def test_check_only_validates_capture_then_exits_without_sniffing(self):
+        code, output, state, *_ = self.run_agent(["--gateway-mac", GATEWAY_MAC, "--check-only"])
+        self.assertEqual(code, 0)
+        self.assertEqual(state["capture_preflight"], {"iface": "eth0", "filter": "arp"})
+        self.assertTrue(state["capture_socket_closed"])
+        self.assertNotIn("sniff_options", state)
+        self.assertIn("Configuration check passed", output)
+
+    def test_offline_check_only_validates_capture_without_replaying(self):
+        with tempfile.NamedTemporaryFile() as capture:
+            code, output, state, *_ = self.run_agent(
+                ["--pcap", capture.name, "--gateway-ip", GATEWAY_IP, "--gateway-mac", GATEWAY_MAC,
+                 "--check-only"],
+                offline=True,
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("offline PCAP and trusted baselines are ready", output)
+        self.assertNotIn("sniff_options", state)
+
+    def test_check_only_reports_capture_permission_failure(self):
+        state = {"capture_preflight_error": True}
+        scapy, scapy_all = make_scapy(state, [])
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, \
+             patch.dict(sys.modules, {"scapy": scapy, "scapy.all": scapy_all}), \
+             patch.object(sys, "argv", [SCRIPT, "--gateway-mac", GATEWAY_MAC, "--check-only",
+                                        "--log-file", os.path.join(temp_dir, "alerts.jsonl")]), \
+             contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exc:
+                runpy.run_path(SCRIPT, run_name="__main__")
+        self.assertEqual(exc.exception.code, 1)
+        self.assertIn("Capture preflight failed", output.getvalue())
         self.assertNotIn("sniff_options", state)
 
     def test_arp_gateway_request_is_reported_as_json(self):

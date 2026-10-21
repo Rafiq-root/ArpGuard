@@ -73,6 +73,14 @@ sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff
 
 Without `--interface`, ArpGuard uses the interface selected by the default route. An explicitly selected interface must have a usable default route; ArpGuard exits with an error rather than silently monitoring a different network.
 
+Use `--check-only` to verify the selected interface, gateway baseline, packet-capture access, and filter before starting a service. It opens and closes a capture socket, then exits without monitoring:
+
+```bash
+sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff --check-only
+```
+
+For PCAP mode, `--check-only` validates the file and supplied baselines without replaying packets.
+
 On dual-stack networks, you can also monitor IPv6 Neighbor Discovery by supplying the router's IPv6 address and a MAC you verified independently. Router Advertisements from another IPv6 address or MAC, and Neighbor Advertisements claiming the configured router address from another MAC, are reported:
 
 ```bash
@@ -101,7 +109,7 @@ From the repository root, run the regression suite with Python's standard librar
 python3 -m unittest discover -s tests -v
 ```
 
-The tests simulate Scapy packet input and cover baseline validation, interface selection, ARP/NDP alerts, trusted-router exceptions, alert severity, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
+The tests simulate Scapy packet input and cover baseline validation, interface selection, capture preflight, ARP/NDP alerts, trusted-router exceptions, alert severity, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
 
 ### Offline PCAP replay
 
