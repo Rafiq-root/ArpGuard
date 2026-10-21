@@ -25,6 +25,7 @@
 | **Stealth Mode** | Uses passive sniffing; does not broadcast packets unless necessary. |
 | **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
 | **Low Resource Usage** | Optimized with BPF filters to run on low-end hardware (e.g., Raspberry Pi). |
+| **Linux service example** | Includes a systemd unit for unattended monitoring with packet-capture capability instead of running the full service as root. |
 
 ---
 
@@ -43,7 +44,7 @@ sudo apt install python3-scapy
 
 
 🛠️ Usage
-This tool requires root privileges to access the network card.
+Live monitoring requires raw packet-capture privileges. You can run it with `sudo`, or use the example systemd service below, which runs as a dedicated account with `CAP_NET_RAW`.
 
 Basic Run:
 
@@ -88,6 +89,38 @@ It will sit silently until an attack occurs.
 If an attack is detected, you will see:
 
 [!!!] YOU ARE UNDER ATTACK! Real MAC: XX:XX... Fake MAC: YY:YY...
+
+### Run as a Linux service
+
+The example unit runs ArpGuard as a dedicated `arpguard` user. Install Scapy for the system Python first, then from the repository root:
+
+```bash
+sudo apt update
+sudo apt install -y python3-scapy
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin arpguard
+sudo install -d -m 0755 /opt/arpguard /etc/arpguard
+sudo install -m 0755 arpguard.py /opt/arpguard/arpguard.py
+sudo install -m 0644 packaging/arpguard.service /etc/systemd/system/arpguard.service
+```
+
+Create `/etc/arpguard/arpguard.conf` with the interface and gateway MAC you verified independently:
+
+```text
+ARPGUARD_INTERFACE=eth0
+ARPGUARD_GATEWAY_MAC=aa:bb:cc:dd:ee:ff
+```
+
+Then enable and inspect the service:
+
+```bash
+sudo chmod 0644 /etc/arpguard/arpguard.conf
+sudo systemctl daemon-reload
+sudo systemctl enable --now arpguard
+sudo systemctl status arpguard
+sudo journalctl -u arpguard -f
+```
+
+The service probes the gateway at startup and stops if its MAC differs from the configured value. Update the config if your gateway hardware changes. Logs are written to `/var/lib/arpguard/arpguard.log`.
 
 🧠 How It Works
 ArpGuard uses the Trust-On-First-Use (TOFU) principle:

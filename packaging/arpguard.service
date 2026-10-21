@@ -1,0 +1,24 @@
+[Unit]
+Description=ArpGuard ARP spoofing monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=arpguard
+Group=arpguard
+EnvironmentFile=/etc/arpguard/arpguard.conf
+WorkingDirectory=/var/lib/arpguard
+StateDirectory=arpguard
+ExecStart=/usr/bin/python3 /opt/arpguard/arpguard.py --interface ${ARPGUARD_INTERFACE} --gateway-mac ${ARPGUARD_GATEWAY_MAC}
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
