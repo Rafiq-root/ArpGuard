@@ -5,7 +5,7 @@ from datetime import datetime
 import ipaddress
 import json
 import logging
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, SysLogHandler
 import os
 import re
 import sys
@@ -68,6 +68,11 @@ def parse_args():
     )
     parser.add_argument("--log-file", default="arpguard.log", help="JSON alert log path (default: arpguard.log).")
     parser.add_argument(
+        "--syslog",
+        action="store_true",
+        help="Forward JSON alerts to the local syslog socket at /dev/log.",
+    )
+    parser.add_argument(
         "--log-size-mb",
         type=int,
         default=5,
@@ -96,8 +101,15 @@ try:
     )
     log_handler.setFormatter(logging.Formatter("%(message)s"))
     root_logger.addHandler(log_handler)
+    if args.syslog:
+        syslog_handler = SysLogHandler(address="/dev/log")
+        syslog_handler.setFormatter(logging.Formatter("%(message)s"))
+        root_logger.addHandler(syslog_handler)
 except OSError as exc:
-    print(f"[!] Error: Could not open alert log '{args.log_file}': {exc}")
+    if args.syslog:
+        print(f"[!] Error: Could not initialize alert logging (check '{args.log_file}' and local /dev/log): {exc}")
+    else:
+        print(f"[!] Error: Could not open alert log '{args.log_file}': {exc}")
     sys.exit(1)
 
 configured_gateway_mac = normalize_mac(args.gateway_mac) if args.gateway_mac else None

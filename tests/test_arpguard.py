@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import logging
+import logging.handlers
 import os
 import runpy
 import sys
@@ -108,6 +109,19 @@ class FakeCaptureSocket:
 
     def close(self):
         self.state["capture_socket_closed"] = True
+
+
+class RecordingSyslogHandler(logging.Handler):
+    records = []
+    addresses = []
+
+    def __init__(self, address):
+        super().__init__()
+        self.address = address
+        self.addresses.append(address)
+
+    def emit(self, record):
+        self.records.append(self.format(record))
 
 
 def make_scapy(state, packets):
@@ -282,6 +296,21 @@ class ArpGuardTests(unittest.TestCase):
         code, output, *_ = self.run_agent([], [packet])
         self.assertEqual(code, 0)
         self.assertEqual(self.assert_event(output)["severity"], "medium")
+
+    def test_syslog_forwards_json_alerts_to_local_socket(self):
+        packet = FakePacket(
+            arp=FakeARP(op=2, psrc=GATEWAY_IP, hwsrc=OTHER_MAC),
+            ethernet=FakeEther(src=OTHER_MAC),
+        )
+        RecordingSyslogHandler.records = []
+        RecordingSyslogHandler.addresses = []
+        with patch.object(logging.handlers, "SysLogHandler", RecordingSyslogHandler):
+            code, _, *_ = self.run_agent(["--syslog"], [packet])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(RecordingSyslogHandler.records), 1)
+        event = json.loads(RecordingSyslogHandler.records[0])
+        self.assertEqual(event["event"], "suspicious_arp")
+        self.assertEqual(RecordingSyslogHandler.addresses, ["/dev/log"])
 
     def test_ethernet_arp_mismatch_alerts_but_normal_reply_does_not(self):
         mismatch = FakePacket(
