@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from scapy.all import *
 import argparse
+from datetime import datetime
+import json
 import logging
 import re
 import sys
@@ -9,7 +11,7 @@ import sys
 logging.basicConfig(
     filename='arpguard.log',
     level=logging.WARNING,
-    format='%(asctime)s - [ALERT] - %(message)s'
+    format='%(message)s'
 )
 
 def get_gateway_ip():
@@ -97,10 +99,21 @@ def process_packet(packet):
 
     if reasons:
         packet_type = "request" if arp.op == 1 else "reply"
-        alert_msg = f"Suspicious ARP {packet_type}: " + "; ".join(reasons)
+        event = {
+            "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "event": "suspicious_arp",
+            "packet_type": packet_type,
+            "interface": getattr(packet, "sniffed_on", None) or "unknown",
+            "gateway_ip": gateway_ip,
+            "expected_gateway_mac": gateway_mac,
+            "arp_sender_ip": arp.psrc,
+            "arp_sender_mac": sender_mac,
+            "ethernet_source_mac": ethernet_mac,
+            "reasons": reasons,
+        }
+        alert_msg = json.dumps(event, sort_keys=True)
 
-        print("[!!!] Suspicious ARP activity detected!")
-        print(f"[!!!] {alert_msg}\n")
+        print(f"[!!!] Suspicious ARP activity detected: {alert_msg}\n")
         logging.warning(alert_msg)
 
 # 4. Start the Sniffer

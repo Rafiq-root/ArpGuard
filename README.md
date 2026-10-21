@@ -83,5 +83,7 @@ Alert: If they don't match, it triggers an alarm.
 
 ArpGuard also inspects ARP requests as well as replies, so gateway claims in gratuitous ARP announcements are checked too. It flags packets where the Ethernet source MAC differs from the ARP sender MAC. These checks identify suspicious packet attributes; investigate the device and network context before treating every alert as a confirmed attack.
 
+Each alert is written as one JSON object to the terminal and `arpguard.log`. It includes the timestamp, captured interface when Scapy provides it, packet type, gateway IP and expected MAC, observed sender MACs, and the reasons for the alert. The interface is reported as `unknown` when the capture backend does not provide it.
+
 ⚠️ Disclaimer
 For Educational Purposes Only. This tool is designed for defensive use (Blue Teaming) to protect your own network. The author is not responsible for any misuse of this tool.
