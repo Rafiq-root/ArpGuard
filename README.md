@@ -69,6 +69,16 @@ sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff
 
 Without `--interface`, ArpGuard uses the interface selected by the default route. An explicitly selected interface must have a usable default route; ArpGuard exits with an error rather than silently monitoring a different network.
 
+### Offline PCAP replay
+
+You can analyze a saved capture without root access or sending packets. Supply the gateway IP and a MAC address verified from a trusted source:
+
+```bash
+python3 arpguard.py --pcap capture.pcap --gateway-ip 192.168.1.1 --gateway-mac aa:bb:cc:dd:ee:ff
+```
+
+Offline mode reads packets from the PCAP and reports matching anomalies using the same detector as live monitoring. It does not discover or probe a gateway and does not start a live network capture. Both gateway values are required so the replay does not treat a value learned from the capture itself as trusted.
+
 What to Expect:
 
 The script will print the Gateway's MAC address.
@@ -92,7 +102,7 @@ Alert: If they don't match, it triggers an alarm.
 
 ArpGuard also inspects ARP requests as well as replies, so gateway claims in gratuitous ARP announcements are checked too. It flags packets where the Ethernet source MAC differs from the ARP sender MAC. These checks identify suspicious packet attributes; investigate the device and network context before treating every alert as a confirmed attack.
 
-Each alert is written as one JSON object to the terminal and `arpguard.log`. It includes the timestamp, captured interface when Scapy provides it, packet type, gateway IP and expected MAC, observed sender MACs, and the reasons for the alert. The interface is reported as `unknown` when the capture backend does not provide it.
+Each alert is written as one JSON object to the terminal and `arpguard.log`. It includes the timestamp, capture mode, interface for live capture (or `null` for offline replay), PCAP filename when replaying, packet type, gateway IP and expected MAC, observed sender MACs, and the reasons for the alert.
 
 ⚠️ Disclaimer
 For Educational Purposes Only. This tool is designed for defensive use (Blue Teaming) to protect your own network. The author is not responsible for any misuse of this tool.
