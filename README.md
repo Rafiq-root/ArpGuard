@@ -60,6 +60,15 @@ sudo python3 arpguard.py --gateway-mac aa:bb:cc:dd:ee:ff
 
 ArpGuard still probes the gateway at startup and exits if the discovered MAC does not match the configured value. This avoids silently trusting an unexpected startup response. Recheck the configured MAC if you replace your router or change network hardware.
 
+To monitor a specific interface, pass its name. Gateway discovery, the baseline ARP probe, and passive capture all use the selected interface:
+
+```bash
+sudo python3 arpguard.py --interface eth0
+sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff
+```
+
+Without `--interface`, ArpGuard uses the interface selected by the default route. An explicitly selected interface must have a usable default route; ArpGuard exits with an error rather than silently monitoring a different network.
+
 What to Expect:
 
 The script will print the Gateway's MAC address.

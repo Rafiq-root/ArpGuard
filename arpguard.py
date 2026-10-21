@@ -14,13 +14,19 @@ logging.basicConfig(
     format='%(message)s'
 )
 
-def get_gateway_ip():
-    """Automatically find the default gateway IP."""
-    return conf.route.route("0.0.0.0")[2]
+def get_gateway_route(interface=None):
+    """Return the default-route interface and gateway, optionally scoped to an interface."""
+    route = conf.route.route("0.0.0.0", dev=interface) if interface else conf.route.route("0.0.0.0")
+    return route[0], route[2]
 
-def get_real_mac(ip):
+def get_real_mac(ip, interface=None):
     """Send a legitimate ARP request to get the true MAC address."""
-    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip), timeout=2, verbose=0)
+    ans, unans = srp(
+        Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst=ip),
+        timeout=2,
+        verbose=0,
+        iface=interface,
+    )
     for snd, rcv in ans:
         if rcv.haslayer(ARP) and rcv[ARP].psrc == ip:
             return rcv[ARP].hwsrc.lower()
@@ -38,6 +44,10 @@ def parse_args():
         "--gateway-mac",
         help="Expected gateway MAC address. The discovered MAC must match this value.",
     )
+    parser.add_argument(
+        "--interface",
+        help="Network interface to use (defaults to the interface selected by the default route).",
+    )
     return parser.parse_args()
 
 # 2. Baseline Configuration
@@ -51,10 +61,29 @@ if args.gateway_mac and not configured_gateway_mac:
     print("[!] Error: --gateway-mac must be a MAC address like aa:bb:cc:dd:ee:ff.")
     sys.exit(2)
 
-gateway_ip = get_gateway_ip()
+if args.interface and args.interface not in get_if_list():
+    print(f"[!] Error: Interface '{args.interface}' was not found.")
+    print("[*] Available interfaces: " + ", ".join(get_if_list()))
+    sys.exit(2)
+
+try:
+    selected_interface, gateway_ip = get_gateway_route(args.interface)
+except Exception as exc:
+    print(f"[!] Error: Could not find a default route on the selected interface: {exc}")
+    sys.exit(1)
+
+if not gateway_ip or gateway_ip == "0.0.0.0":
+    print("[!] Error: No usable default gateway was found on the selected interface.")
+    sys.exit(1)
+
+if args.interface and selected_interface != args.interface:
+    print(f"[!] Error: The default route resolved to '{selected_interface}', not '{args.interface}'.")
+    sys.exit(1)
+
+print(f"[*] Using interface: {selected_interface}")
 print(f"[*] Discovering Gateway IP: {gateway_ip}")
 
-gateway_mac = get_real_mac(gateway_ip)
+gateway_mac = get_real_mac(gateway_ip, selected_interface)
 if not gateway_mac:
     print("[!] Error: Could not resolve Gateway MAC. Check your network connection.")
     sys.exit(1)
@@ -119,7 +148,7 @@ def process_packet(packet):
 # 4. Start the Sniffer
 try:
     # store=0 ensures we don't eat up your RAM by keeping packets in memory
-    sniff(filter="arp", prn=process_packet, store=0)
+    sniff(iface=selected_interface, filter="arp", prn=process_packet, store=0)
 except KeyboardInterrupt:
     print("\n[*] Shutting down ArpGuard. Stay safe.")
     sys.exit(0)
