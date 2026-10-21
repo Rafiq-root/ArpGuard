@@ -80,6 +80,16 @@ sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff --ipv6
 
 The IPv6 trust values are explicit and are never learned from the monitored packets. If your network has multiple legitimate IPv6 routers, configure and account for them before enabling this check; announcements from other routers are reported as unexpected.
 
+### Run the automated checks
+
+From the repository root, run the regression suite with Python's standard library:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The tests simulate Scapy packet input and cover baseline validation, interface selection, ARP/NDP alerts, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
+
 ### Offline PCAP replay
 
 You can analyze a saved capture without root access or sending packets. Supply the gateway IP and a MAC address verified from a trusted source. Add the optional IPv6 router pair to inspect NDP traffic too:
