@@ -5,16 +5,10 @@ from datetime import datetime
 import ipaddress
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import sys
-
-# 1. Initialize the Black Box Logger
-logging.basicConfig(
-    filename='arpguard.log',
-    level=logging.WARNING,
-    format='%(message)s'
-)
 
 def get_gateway_route(interface=None):
     """Return the default-route interface and gateway, optionally scoped to an interface."""
@@ -52,6 +46,13 @@ def parse_args():
     )
     parser.add_argument("--pcap", help="Replay an offline PCAP file instead of monitoring a live interface.")
     parser.add_argument("--gateway-ip", help="Gateway IPv4 address to use with --pcap.")
+    parser.add_argument("--log-file", default="arpguard.log", help="JSON alert log path (default: arpguard.log).")
+    parser.add_argument(
+        "--log-size-mb",
+        type=int,
+        default=5,
+        help="Maximum size for each alert log file before rotation (default: 5 MB; 5 backups are kept).",
+    )
     return parser.parse_args()
 
 # 2. Baseline Configuration
@@ -60,6 +61,25 @@ print("      🛡️ ArpGuard IDS Active 🛡️      ")
 print("========================================")
 
 args = parse_args()
+if args.log_size_mb < 1:
+    print("[!] Error: --log-size-mb must be at least 1.")
+    sys.exit(2)
+
+try:
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.WARNING)
+    log_handler = RotatingFileHandler(
+        args.log_file,
+        maxBytes=args.log_size_mb * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    log_handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger.addHandler(log_handler)
+except OSError as exc:
+    print(f"[!] Error: Could not open alert log '{args.log_file}': {exc}")
+    sys.exit(1)
+
 configured_gateway_mac = normalize_mac(args.gateway_mac) if args.gateway_mac else None
 if args.gateway_mac and not configured_gateway_mac:
     print("[!] Error: --gateway-mac must be a MAC address like aa:bb:cc:dd:ee:ff.")

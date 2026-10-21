@@ -26,6 +26,7 @@
 | **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
 | **Low Resource Usage** | Optimized with BPF filters to run on low-end hardware (e.g., Raspberry Pi). |
 | **Linux service example** | Includes a systemd unit for unattended monitoring with packet-capture capability instead of running the full service as root. |
+| **Rotating JSON logs** | Keeps alert logs bounded and lets you choose their location. |
 
 ---
 
@@ -135,7 +136,13 @@ Alert: If they don't match, it triggers an alarm.
 
 ArpGuard also inspects ARP requests as well as replies, so gateway claims in gratuitous ARP announcements are checked too. It flags packets where the Ethernet source MAC differs from the ARP sender MAC. These checks identify suspicious packet attributes; investigate the device and network context before treating every alert as a confirmed attack.
 
-Each alert is written as one JSON object to the terminal and `arpguard.log`. It includes the timestamp, capture mode, interface for live capture (or `null` for offline replay), PCAP filename when replaying, packet type, gateway IP and expected MAC, observed sender MACs, and the reasons for the alert.
+Each alert is written as one JSON object to the terminal and a rotating log file. By default the file is `arpguard.log` in the current directory; five 5 MB files are kept. Set a different location or file size with `--log-file` and `--log-size-mb`, for example:
+
+```bash
+sudo python3 arpguard.py --log-file /var/log/arpguard/events.jsonl --log-size-mb 10
+```
+
+Each entry includes the timestamp, capture mode, interface for live capture (or `null` for offline replay), PCAP filename when replaying, packet type, gateway IP and expected MAC, observed sender MACs, and the reasons for the alert. The log contents are JSON Lines, with one alert object per line.
 
 ⚠️ Disclaimer
 For Educational Purposes Only. This tool is designed for defensive use (Blue Teaming) to protect your own network. The author is not responsible for any misuse of this tool.
