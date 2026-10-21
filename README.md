@@ -23,7 +23,7 @@
 | :--- | :--- |
 | **Auto-Gateway Detection** | Automatically finds your Router IP and MAC address. |
 | **Stealth Mode** | Uses passive sniffing; does not broadcast packets unless necessary. |
-| **Instant Alerts** | Prints a warning the millisecond a spoofed packet is detected. |
+| **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
 | **Low Resource Usage** | Optimized with BPF filters to run on low-end hardware (e.g., Raspberry Pi). |
 
 ---
@@ -80,6 +80,8 @@ Monitor: It listens to all ARP traffic using Scapy.
 Compare: Every time a packet claims to be the router, it compares the MAC address to the baseline.
 
 Alert: If they don't match, it triggers an alarm.
+
+ArpGuard also inspects ARP requests as well as replies, so gateway claims in gratuitous ARP announcements are checked too. It flags packets where the Ethernet source MAC differs from the ARP sender MAC. These checks identify suspicious packet attributes; investigate the device and network context before treating every alert as a confirmed attack.
 
 ⚠️ Disclaimer
 For Educational Purposes Only. This tool is designed for defensive use (Blue Teaming) to protect your own network. The author is not responsible for any misuse of this tool.

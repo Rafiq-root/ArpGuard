@@ -79,22 +79,29 @@ print("[*] Monitoring local traffic... (Press Ctrl+C to stop)\n")
 
 # 3. Core Detection Engine
 def process_packet(packet):
-    # We only care about ARP responses (op=2) claiming to be the Gateway
-    if packet.haslayer(ARP) and packet[ARP].op == 2:
-        if packet[ARP].psrc == gateway_ip:
-            real_mac = gateway_mac
-            fake_mac = packet[ARP].hwsrc
+    if not packet.haslayer(ARP) or packet[ARP].op not in (1, 2):
+        return
 
-            # If the MAC in the packet doesn't match the locked MAC -> Attack!
-            if real_mac != fake_mac:
-                alert_msg = f"Gateway Spoofing Detected! Real: {real_mac} | Attacker: {fake_mac}"
-                
-                # Print to terminal
-                print(f"[!!!] YOU ARE UNDER ATTACK!")
-                print(f"[!!!] {alert_msg}\n")
-                
-                # Write quietly to the log file
-                logging.warning(alert_msg)
+    arp = packet[ARP]
+    sender_mac = arp.hwsrc.lower()
+    ethernet_mac = packet[Ether].src.lower() if packet.haslayer(Ether) else None
+    reasons = []
+
+    # Requests and gratuitous ARP announcements can also poison neighbor caches.
+    if arp.psrc == gateway_ip and sender_mac != gateway_mac:
+        reasons.append(f"gateway IP {gateway_ip} claimed by unexpected MAC {sender_mac} (expected {gateway_mac})")
+
+    # The Ethernet source and ARP sender hardware address should describe the same device.
+    if ethernet_mac and ethernet_mac != sender_mac:
+        reasons.append(f"Ethernet source {ethernet_mac} does not match ARP sender MAC {sender_mac}")
+
+    if reasons:
+        packet_type = "request" if arp.op == 1 else "reply"
+        alert_msg = f"Suspicious ARP {packet_type}: " + "; ".join(reasons)
+
+        print("[!!!] Suspicious ARP activity detected!")
+        print(f"[!!!] {alert_msg}\n")
+        logging.warning(alert_msg)
 
 # 4. Start the Sniffer
 try:
