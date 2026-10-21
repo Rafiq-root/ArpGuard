@@ -212,9 +212,28 @@ class ArpGuardTests(unittest.TestCase):
         self.assertEqual(code, 0)
         event = self.assert_event(output)
         self.assertEqual(event["packet_type"], "request")
+        self.assertEqual(event["severity"], "high")
         self.assertEqual(event["expected_gateway_mac"], GATEWAY_MAC)
         self.assertEqual(event["arp_sender_mac"], OTHER_MAC)
         self.assertTrue(event["timestamp"])
+
+    def test_trusted_gateway_failover_mac_is_not_reported(self):
+        packet = FakePacket(
+            arp=FakeARP(op=2, psrc=GATEWAY_IP, hwsrc=OTHER_MAC),
+            ethernet=FakeEther(src=OTHER_MAC),
+        )
+        code, output, *_ = self.run_agent(["--trusted-gateway-mac", OTHER_MAC], [packet])
+        self.assertEqual(code, 0)
+        self.assertNotIn("Suspicious ARP activity detected:", output)
+
+    def test_ethernet_only_mismatch_is_medium_severity(self):
+        packet = FakePacket(
+            arp=FakeARP(psrc="192.168.1.20", hwsrc=GATEWAY_MAC),
+            ethernet=FakeEther(src=OTHER_MAC),
+        )
+        code, output, *_ = self.run_agent([], [packet])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.assert_event(output)["severity"], "medium")
 
     def test_ethernet_arp_mismatch_alerts_but_normal_reply_does_not(self):
         mismatch = FakePacket(
@@ -291,9 +310,35 @@ class ArpGuardTests(unittest.TestCase):
         marker = "Suspicious IPv6 NDP activity detected:"
         events = [json.loads(line.split(marker, 1)[1].strip()) for line in output.splitlines() if marker in line]
         self.assertEqual([event["packet_type"] for event in events], ["router_advertisement", "neighbor_advertisement"])
-        self.assertTrue(all(event["expected_router_ipv6"] == IPV6_GATEWAY_IP for event in events))
+        self.assertEqual([event["expected_router_ipv6"] for event in events], ["fe80::bad", IPV6_GATEWAY_IP])
+        self.assertTrue(all(event["severity"] == "high" for event in events))
         self.assertIn("Suspicious IPv6 NDP activity detected:", output)
         self.assertEqual(len(events), 2)
+
+    def test_additional_trusted_ipv6_router_is_accepted(self):
+        alternate_ip = "fe80::2"
+        packet = FakePacket(
+            ipv6=FakeIPv6(src=alternate_ip),
+            ethernet=FakeEther(src=OTHER_MAC),
+            ra=FakeRouterAdvertisement(),
+            src_ll=FakeSourceLLAddress(lladdr=OTHER_MAC),
+        )
+        with tempfile.NamedTemporaryFile() as capture:
+            code, output, state, *_ = self.run_agent(
+                ["--pcap", capture.name, "--gateway-ip", GATEWAY_IP, "--gateway-mac", GATEWAY_MAC,
+                 "--ipv6-gateway-ip", IPV6_GATEWAY_IP, "--ipv6-gateway-mac", GATEWAY_MAC,
+                 "--trusted-ipv6-router", f"{alternate_ip}={OTHER_MAC}"],
+                [packet], offline=True,
+            )
+        self.assertEqual(code, 0)
+        self.assertNotIn("Suspicious IPv6 NDP activity detected:", output)
+        self.assertEqual(state["sniff_options"]["offline"], capture.name)
+
+    def test_trusted_ipv6_router_requires_valid_pair(self):
+        code, output, state, *_ = self.run_agent(["--trusted-ipv6-router", "fe80::2=invalid"])
+        self.assertEqual(code, 2)
+        self.assertIn("Invalid MAC in --trusted-ipv6-router", output)
+        self.assertNotIn("sniff_options", state)
 
     def test_live_ipv6_monitoring_captures_icmpv6(self):
         code, _, state, *_ = self.run_agent([

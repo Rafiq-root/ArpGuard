@@ -23,8 +23,9 @@
 | :--- | :--- |
 | **Auto-Gateway Detection** | Automatically finds your Router IP and MAC address. |
 | **Stealth Mode** | Uses passive sniffing; does not broadcast packets unless necessary. |
-| **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
-| **IPv6 NDP checks** | Optionally checks IPv6 router advertisements and neighbor advertisements against a separately verified router address and MAC. |
+| **ARP Anomaly Alerts** | Checks gateway claims in ARP requests and replies, allows explicitly trusted failover MACs, and flags mismatches between Ethernet source and ARP sender MAC addresses. |
+| **IPv6 NDP checks** | Optionally checks IPv6 router advertisements and neighbor advertisements against separately verified router address and MAC pairs, including multiple routers. |
+| **Alert severity** | Labels gateway/router mapping violations `high` and Ethernet/ARP source mismatches `medium` to support triage. |
 | **Low Resource Usage** | Optimized with BPF filters to run on low-end hardware (e.g., Raspberry Pi). |
 | **Linux service example** | Includes a systemd unit for unattended monitoring with packet-capture capability instead of running the full service as root. |
 | **Rotating JSON logs** | Keeps alert logs bounded and lets you choose their location. |
@@ -78,7 +79,19 @@ On dual-stack networks, you can also monitor IPv6 Neighbor Discovery by supplyin
 sudo python3 arpguard.py --interface eth0 --gateway-mac aa:bb:cc:dd:ee:ff --ipv6-gateway-ip fe80::1 --ipv6-gateway-mac aa:bb:cc:dd:ee:ff
 ```
 
-The IPv6 trust values are explicit and are never learned from the monitored packets. If your network has multiple legitimate IPv6 routers, configure and account for them before enabling this check; announcements from other routers are reported as unexpected.
+The IPv6 trust values are explicit and are never learned from the monitored packets. Add every legitimate router with `--trusted-ipv6-router IPv6=MAC`; its address and MAC must be verified independently. For example:
+
+```bash
+sudo python3 arpguard.py --gateway-mac aa:bb:cc:dd:ee:ff --ipv6-gateway-ip fe80::1 --ipv6-gateway-mac aa:bb:cc:dd:ee:ff --trusted-ipv6-router fe80::2=11:22:33:44:55:66
+```
+
+For IPv4 gateway high-availability or failover, repeat `--trusted-gateway-mac` for each independently verified MAC:
+
+```bash
+sudo python3 arpguard.py --gateway-mac aa:bb:cc:dd:ee:ff --trusted-gateway-mac 11:22:33:44:55:66
+```
+
+Only claims matching these explicit address/MAC mappings are accepted. `high` severity means a trusted IP was advertised with an untrusted mapping (or an untrusted IPv6 router sent an advertisement); `medium` means the Ethernet source disagreed with the ARP/NDP link-layer address. Severity helps prioritize investigation and does not by itself confirm an attack.
 
 ### Run the automated checks
 
@@ -88,7 +101,7 @@ From the repository root, run the regression suite with Python's standard librar
 python3 -m unittest discover -s tests -v
 ```
 
-The tests simulate Scapy packet input and cover baseline validation, interface selection, ARP/NDP alerts, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
+The tests simulate Scapy packet input and cover baseline validation, interface selection, ARP/NDP alerts, trusted-router exceptions, alert severity, offline-mode safety, and log rotation. They do not require root privileges or transmit packets.
 
 ### Offline PCAP replay
 
